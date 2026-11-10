@@ -308,6 +308,237 @@
     document.setProducer('pdf-lib');
     return { bytes: await document.save(), warnings };
   }
+
+  // Print compatibility output is deliberately independent of createPdf:
+  // one opaque JPEG in a new PDF, with no source objects or embedded fonts.
+  const PRINT_DPI = 300;
+  const PRINT_MAX_PIXELS = 12000000;
+  function svgNumber(value) {
+    if (!Number.isFinite(value)) throw new Error('列印版面含有無效座標，請還原欄位定位後再試。');
+    return String(Number(value.toFixed(8)));
+  }
+  function xmlAttribute(value) {
+    return String(value).replace(/[&<>"']/g, char => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;',
+    }[char]));
+  }
+  function printValidationError(issues) {
+    const error = new Error(issues.map(issue => issue.label + '：' + issue.message).join('\n'));
+    error.name = 'PdfValidationError'; error.issues = issues;
+    return error;
+  }
+  function preparePrintSnapshot(options) {
+    needFont();
+    if (!options || typeof options !== 'object' || !options.template || !Array.isArray(options.template.fields)) {
+      throw new Error('請先選擇報告範本。');
+    }
+    const template = options.template;
+    const values = options.values || {};
+    const settings = options.settings || {};
+    const overrides = options.overrides || {};
+    const pageWidth = number(template.width, number(template.pageWidth, 595.32));
+    const pageHeight = number(template.height, number(template.pageHeight, 841.92));
+    const width = Math.round(pageWidth * PRINT_DPI / 72);
+    const height = Math.round(pageHeight * PRINT_DPI / 72);
+    if (!(pageWidth > 0 && pageHeight > 0 && width > 0 && height > 0)
+      || width * height > PRINT_MAX_PIXELS) {
+      throw new Error('列印相容模式的頁面尺寸超出支援範圍，請使用單頁 A4 範本。');
+    }
+    const issues = validateForm(options);
+    if (issues.length) throw printValidationError(issues);
+    const exportFont = font;
+    const color = /^#[\da-f]{6}$/i.test(settings.color || '') ? settings.color : '#000000';
+    const paths = [];
+    const warnings = [];
+    const glyphPaths = new Map();
+    // All layouts, glyph outlines, color and metadata are captured before any
+    // background fetch, image decoding or other await can allow state changes.
+    for (const field of template.fields) {
+      const value = values[field.id];
+      if (value === '' || value == null || value === false) continue;
+      if (field.type === 'checkbox' && !value) continue;
+      if (number(field.page, 0) !== 0) throw new Error('列印相容模式目前僅支援單頁範本。');
+      if (field.type === 'checkbox') {
+        const check = checkLayout(field, settings, overrides[field.id]);
+        paths.push('<polyline points="' + check.points.map(point => point.map(svgNumber).join(',')).join(' ')
+          + '" fill="none" stroke="' + color + '" stroke-width="' + svgNumber(check.thickness)
+          + '" stroke-linecap="round" stroke-linejoin="round"/>');
+        continue;
+      }
+      const layout = layoutText(field, value, settings, overrides[field.id]);
+      if (layout.shrunk) warnings.push({ fieldId: field.id, label: field.label,
+        code: 'font-shrunk', message: '已自動縮至 ' + layout.fontSize.toFixed(2) + ' pt。' });
+      for (const line of layout.lines) {
+        if (!line.text) continue;
+        let run;
+        try { run = exportFont.layout(line.text, FEATURES); }
+        catch (_) { throw new Error('「' + field.label + '」無法轉成列印字形，請改用內附中文字型。'); }
+        const scale = line.size / exportFont.unitsPerEm;
+        let penX = 0, penY = 0;
+        for (let i = 0; i < run.glyphs.length; i++) {
+          const glyph = run.glyphs[i];
+          const position = run.positions[i] || {};
+          let outline = glyphPaths.get(glyph.id);
+          if (outline === undefined) {
+            try { outline = glyph.path.toSVG(); }
+            catch (_) { throw new Error('「' + field.label + '」的字型沒有可列印輪廓，請改用內附中文字型。'); }
+            if (typeof outline !== 'string') throw new Error('無法讀取列印字形輪廓，請改用內附中文字型。');
+            glyphPaths.set(glyph.id, outline);
+          }
+          if (outline) {
+            const x = line.x + (penX + number(position.xOffset, 0)) * scale;
+            const y = line.baseline - (penY + number(position.yOffset, 0)) * scale;
+            paths.push('<path d="' + xmlAttribute(outline) + '" fill="' + color
+              + '" transform="translate(' + svgNumber(x) + ' ' + svgNumber(y) + ') scale('
+              + svgNumber(scale) + ' ' + svgNumber(-scale) + ')"/>');
+          } else if ((glyph.codePoints || []).some(code => !/\s/u.test(String.fromCodePoint(code)))) {
+            throw new Error('「' + field.label + '」含有無法轉成輪廓的字形，請改用內附中文字型。');
+          }
+          penX += number(position.xAdvance, glyph.advanceWidth);
+          penY += number(position.yAdvance, 0);
+        }
+      }
+    }
+    return { pageWidth, pageHeight, width, height, dpi: PRINT_DPI, warnings,
+      title: template.title || '書面分析報告', paths: paths.join(''),
+      backgroundPath: typeof template.printPreview === 'string' && template.printPreview.trim()
+        ? template.printPreview : 'assets/' + template.id + '-print.png',
+      provider: resourceProvider || defaultProvider };
+  }
+  function validatePrintPng(data, snapshot) {
+    const bytes = bytesOf(data);
+    const signature = [137, 80, 78, 71, 13, 10, 26, 10];
+    if (bytes.length < 24 || bytes.length > 40 * 1024 * 1024
+      || signature.some((value, index) => bytes[index] !== value)) {
+      throw new Error('列印底圖不是有效的 PNG，請確認程式包含完整的 300 dpi 列印底圖。');
+    }
+    const header = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const width = header.getUint32(16, false), height = header.getUint32(20, false);
+    if (!(width > 0 && height > 0) || width * height > PRINT_MAX_PIXELS
+      || Math.abs(width - snapshot.width) > 2 || Math.abs(height - snapshot.height) > 2) {
+      throw new Error('列印底圖尺寸與範本不符，請使用此範本專用的 300 dpi 列印底圖。');
+    }
+    return bytes;
+  }
+  function base64Of(bytes) {
+    if (typeof root.btoa === 'function') {
+      const chunks = [];
+      for (let i = 0; i < bytes.length; i += 32768) chunks.push(String.fromCharCode.apply(null, bytes.subarray(i, i + 32768)));
+      return root.btoa(chunks.join(''));
+    }
+    if (typeof Buffer !== 'undefined') return Buffer.from(bytes).toString('base64');
+    throw new Error('此環境無法處理列印底圖，請使用 Chrome 或 Edge。');
+  }
+  function bytesFromBase64(encoded) {
+    if (typeof root.atob === 'function') {
+      let binary;
+      try { binary = root.atob(encoded); }
+      catch (_) { throw new Error('列印底圖資料不完整。'); }
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+      return bytes;
+    }
+    if (typeof Buffer !== 'undefined') return new Uint8Array(Buffer.from(encoded, 'base64'));
+    throw new Error('此環境無法處理列印底圖，請使用 Chrome 或 Edge。');
+  }
+  function printSvgFromSnapshot(snapshot, backgroundDataUrl) {
+    return '<svg xmlns="http://www.w3.org/2000/svg" width="' + snapshot.width + '" height="' + snapshot.height
+      + '" viewBox="0 0 ' + svgNumber(snapshot.pageWidth) + ' ' + svgNumber(snapshot.pageHeight) + '">'
+      + '<rect width="100%" height="100%" fill="#ffffff"/>'
+      + '<image x="0" y="0" width="' + svgNumber(snapshot.pageWidth) + '" height="' + svgNumber(snapshot.pageHeight)
+      + '" preserveAspectRatio="none" href="' + backgroundDataUrl + '"/>' + snapshot.paths + '</svg>';
+  }
+  /** Synchronous QA helper: geometry and glyphs match the print export exactly. */
+  function renderPrintSvg(options, backgroundDataUrl) {
+    const snapshot = preparePrintSnapshot(options);
+    if (typeof backgroundDataUrl !== 'string' || backgroundDataUrl.length > 56 * 1024 * 1024
+      || !/^data:image\/png;base64,[A-Za-z0-9+/]+={0,2}$/.test(backgroundDataUrl)) {
+      throw new Error('列印底圖必須是內嵌的 PNG 資料。');
+    }
+    validatePrintPng(bytesFromBase64(backgroundDataUrl.slice(backgroundDataUrl.indexOf(',') + 1)), snapshot);
+    return { svg: printSvgFromSnapshot(snapshot, backgroundDataUrl), width: snapshot.width, height: snapshot.height,
+      pageWidth: snapshot.pageWidth, pageHeight: snapshot.pageHeight, dpi: snapshot.dpi, warnings: snapshot.warnings };
+  }
+  async function rasterizePrintSvg(svg, dimensions) {
+    if (!root.document || typeof root.Image !== 'function' || !root.URL?.createObjectURL || typeof root.Blob !== 'function') {
+      throw new Error('此環境沒有影像列印功能，請在 Chrome 或 Edge 開啟工具。');
+    }
+    const canvas = root.document.createElement('canvas');
+    canvas.width = dimensions.width; canvas.height = dimensions.height;
+    const context = canvas.getContext('2d', { alpha: false });
+    if (!context) { canvas.width = 1; canvas.height = 1; throw new Error('無法建立列印畫布，請關閉其他分頁後再試。'); }
+    const image = new root.Image();
+    let url = null, timeout = null;
+    try {
+      context.fillStyle = '#ffffff'; context.fillRect(0, 0, canvas.width, canvas.height);
+      url = root.URL.createObjectURL(new root.Blob([svg], { type: 'image/svg+xml;charset=utf-8' }));
+      await new Promise((resolve, reject) => {
+        image.onload = resolve;
+        image.onerror = () => reject(new Error('無法合成列印影像，請重新載入工具後再試。'));
+        timeout = root.setTimeout(() => reject(new Error('列印影像處理逾時，請關閉其他分頁後再試。')), 30000);
+        image.src = url;
+      });
+      root.clearTimeout(timeout); timeout = null;
+      context.drawImage(image, 0, 0, canvas.width, canvas.height);
+      const jpeg = await new Promise((resolve, reject) => {
+        canvas.toBlob(blob => blob && blob.type === 'image/jpeg' ? resolve(blob)
+          : reject(new Error('無法產生列印 JPG，請使用最新版 Chrome 或 Edge。')), 'image/jpeg', 0.92);
+      });
+      return new Uint8Array(await jpeg.arrayBuffer());
+    } finally {
+      if (timeout !== null) root.clearTimeout(timeout);
+      image.onload = null; image.onerror = null; image.src = '';
+      if (url) root.URL.revokeObjectURL(url);
+      canvas.width = 1; canvas.height = 1;
+    }
+  }
+  /**
+   * One opaque 300 dpi JPEG in a fresh PDF 1.4 with classic xref records.
+   * Optional QA-only injection: rasterizeSvg(svg, {width, height}) -> JPEG bytes.
+   */
+  async function createPrintPdf(options) {
+    const snapshot = preparePrintSnapshot(options);
+    if (options.rasterizeSvg != null && typeof options.rasterizeSvg !== 'function') {
+      throw new Error('列印影像處理器設定無效。');
+    }
+    const rasterizer = options.rasterizeSvg || rasterizePrintSvg;
+    const lib = pdfLib();
+    let background;
+    try { background = validatePrintPng(await snapshot.provider(snapshot.backgroundPath), snapshot); }
+    catch (error) { throw new Error('無法載入列印底圖：' + (error.message || '請確認程式檔案完整。')); }
+    const svg = printSvgFromSnapshot(snapshot, 'data:image/png;base64,' + base64Of(background));
+    let imageBytes;
+    try { imageBytes = bytesOf(await rasterizer(svg, { width: snapshot.width, height: snapshot.height })); }
+    catch (error) { throw new Error('無法產生列印影像：' + (error.message || '請重新開啟工具後再試。')); }
+    if (imageBytes.length < 4 || imageBytes[0] !== 255 || imageBytes[1] !== 216 || imageBytes[2] !== 255) {
+      throw new Error('列印影像必須是有效的 JPG，無法輸出 PDF。');
+    }
+    const document = await lib.PDFDocument.create();
+    const jpeg = await document.embedJpg(imageBytes);
+    if (jpeg.width !== snapshot.width || jpeg.height !== snapshot.height) {
+      throw new Error('列印影像尺寸不正確，請重新輸出。');
+    }
+    const page = document.addPage([snapshot.pageWidth, snapshot.pageHeight]);
+    page.drawImage(jpeg, { x: 0, y: 0, width: snapshot.pageWidth, height: snapshot.pageHeight });
+    document.setTitle(snapshot.title + ' - 列印相容版');
+    document.setCreator('保險書面分析報告填寫工具');
+    document.setProducer('pdf-lib');
+    const bytes = await document.save({ useObjectStreams: false });
+    // pdf-lib's PDFWriter creates its own 1.7 header; changing context.header
+    // does not affect these serialized bytes. This fresh image-only document
+    // uses only PDF 1.4-compatible features and classic xref records. Replace
+    // the minor-version digit in place so every byte offset stays unchanged.
+    // Never apply this header change to imported/source PDFs or createPdf().
+    const header = String.fromCharCode.apply(null, bytes.subarray(0, 8));
+    if (header !== '%PDF-1.7' && header !== '%PDF-1.4') {
+      throw new Error('列印相容 PDF 的版本標頭異常，請重新載入工具後再試。');
+    }
+    bytes[7] = 0x34;
+    return { bytes, warnings: snapshot.warnings,
+      imageBytes, imageMimeType: 'image/jpeg',
+      printInfo: { dpi: snapshot.dpi, width: snapshot.width, height: snapshot.height } };
+  }
   return { loadResources, setFontBytes, resetFont, getFontBytes, getFontInfo,
-    measureText, missingGlyphs, layoutText, checkLayout, validateForm, createPdf };
+    measureText, missingGlyphs, layoutText, checkLayout, validateForm, createPdf,
+    renderPrintSvg, createPrintPdf };
 });

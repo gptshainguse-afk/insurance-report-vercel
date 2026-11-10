@@ -14,11 +14,12 @@
     <header class="app-header">
       <a class="brand" href="#" aria-label="保險表單工作台首頁">
         <span class="brand-mark"><svg viewBox="0 0 24 24" fill="none"><path d="M6 3h9l4 4v14H6z" stroke="currentColor" stroke-width="1.6"/><path d="m9 13 2.4 2.5 4.5-5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
-        <span><strong>保險表單工作台</strong><small>書面分析報告 · 三份範本</small></span>
+        <span><strong>保險表單工作台</strong><small>書面分析報告 · 三份範本 · v1.2</small></span>
       </a>
       <div class="header-actions">
         <span class="local-badge"><span></span> 本機處理</span>
         <button class="button ghost" id="manageButton" type="button"><span class="icon" data-icon="folder"></span><span>草稿與設定</span></button>
+        <label class="export-mode-control" for="exportMode"><span>輸出格式</span><select id="exportMode" disabled><option value="print">列印相容 PDF</option><option value="standard">一般 PDF（文字可選取）</option></select></label>
         <button class="button primary" id="exportButton" type="button" disabled><span class="icon" data-icon="download"></span><span>匯出 PDF</span></button>
       </div>
     </header>
@@ -68,7 +69,8 @@
       <section class="preview-panel" aria-label="PDF 即時預覽">
         <div class="preview-toolbar"><div class="preview-title"><span class="icon" data-icon="document"></span><strong>原稿預覽</strong><span class="page-number">1 / 1</span><span class="demo-badge hidden" id="demoBadge">範例資料</span></div><div class="preview-tools"><label class="guide-control"><input id="showGuides" type="checkbox" checked>顯示欄位</label><div class="zoom-control"><button type="button" id="zoomOut" aria-label="縮小">−</button><select id="zoomSelect" aria-label="預覽倍率"><option value="fit">適合寬度</option value="75">75%</option><option value="100">100%</option><option value="125">125%</option><option value="150">150%</option></select><button type="button" id="zoomIn" aria-label="放大">＋</button></div></div></div>
         <div class="preview-scroll" id="previewScroll"><div class="preview-context"><span id="previewFileName">壽險書面分析報告</span><span>A4 · 直式</span></div><div class="page-stage" id="pageStage"><div class="paper" id="paper" tabindex="0" aria-label="報告欄位預覽，點選欄位編輯"><img id="templateImage" alt="原始分析報告版面" draggable="false"><svg id="overlay" viewBox="0 0 595.32 841.92" aria-label="填寫欄位"></svg></div></div><div class="preview-caption"><span class="icon" data-icon="lock"></span>填寫資料在瀏覽器內處理，匯出保留原始 PDF 版面。</div></div>
-        <div id="exportResult" class="export-result hidden"><div><strong>PDF 已產生</strong><span id="exportFileName"></span></div><a id="downloadPdfLink" class="button small primary">下載 PDF</a><a id="openPdfLink" class="text-button" target="_blank" rel="noopener">開啟檢查</a></div>
+        <div class="export-mode-hint" id="exportModeHint">列印相容：整頁影像，文字無法選取；可另下載 JPG。</div>
+        <div id="exportResult" class="export-result hidden"><div><strong>PDF 已產生</strong><span id="exportFileName"></span></div><a id="downloadPdfLink" class="button small primary">下載 PDF</a><a id="downloadPrintImageLink" class="text-button hidden">下載列印圖檔 JPG</a><a id="openPdfLink" class="text-button" target="_blank" rel="noopener">開啟檢查</a></div>
         <div class="preview-status"><span id="previewStatus">正在載入範本與中文字型…</span><span id="selectedStatus">點選欄位即可填寫</span></div>
       </section>
     </main>

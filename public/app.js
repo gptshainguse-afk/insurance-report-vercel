@@ -2,7 +2,7 @@
   'use strict';
   const $ = id => document.getElementById(id);
   const SVG = 'http://www.w3.org/2000/svg';
-  const defaults = () => ({ fontSize: 9, checkSize: 8, color: '#111111', offsetX: 0, offsetY: 0 });
+  const defaults = (id = 'life') => ({ fontSize: 9, checkSize: 8, color: '#111111', offsetX: 0, offsetY: 0, outputMode: id === 'unified' ? 'print' : 'standard' });
   const STORAGE_LAYOUT = 'insurance-report-layout-v1';
   const STORAGE_DRAFT = 'insurance-report-draft-v1';
   const STORAGE_REMEMBER = 'insurance-report-remember-v1';
@@ -10,8 +10,8 @@
   const perTemplate = factory => Object.fromEntries(templateIds.map(id => [id, factory(id)]));
   const state = { templateId: window.TEMPLATES.unified ? 'unified' : templateIds[0], mode: 'fill', section: 'basic', selected: '', zoom: 'fit', ready: false,
     values: perTemplate(() => ({})), overrides: perTemplate(() => ({})), settings: perTemplate(defaults),
-    demo: perTemplate(() => false), remember: false, guides: true, issues: [], customFont: '', dirty: false };
-  let activeFontFace = null, toastTimer, drag = null, messageResolve = null, persistTimer, lastPdfUrl = null;
+    demo: perTemplate(() => false), remember: false, guides: true, issues: [], customFont: '', dirty: false, exporting: false };
+  let activeFontFace = null, toastTimer, drag = null, messageResolve = null, persistTimer, lastPdfUrl = null, lastPrintImageUrl = null;
   const icons = {
     folder: '<path d="M3 7a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v9H3z"/>',
     download: '<path d="M12 3v12m-4-4 4 4 4-4M4 16v5h16v-5"/>',
@@ -64,10 +64,10 @@
       if (!ok) document.querySelector('.autosave-status').textContent = '無法自動儲存，請下載定位設定備份';
     }, 180);
   }
-  function cleanSettings(raw) {
+  function cleanSettings(raw, id = state.templateId) {
     raw = raw && typeof raw === 'object' ? raw : {};
     return { fontSize: clamp(finite(raw.fontSize, 9), 5.85, 12.6), checkSize: clamp(finite(raw.checkSize, 8), 3, 16),
-      color: /^#[0-9a-f]{6}$/i.test(raw.color || '') ? raw.color : '#111111', offsetX: clamp(finite(raw.offsetX, 0), -36, 36), offsetY: clamp(finite(raw.offsetY, 0), -36, 36) };
+      color: /^#[0-9a-f]{6}$/i.test(raw.color || '') ? raw.color : '#111111', offsetX: clamp(finite(raw.offsetX, 0), -36, 36), offsetY: clamp(finite(raw.offsetY, 0), -36, 36), outputMode: ['standard','print'].includes(raw.outputMode) ? raw.outputMode : defaults(id).outputMode };
   }
   function snapshotTemplateIds(raw, kind) {
     if (!raw || raw.format !== 'insurance-report-studio' || ![1, 2].includes(raw.version)) throw new Error('檔案不是此工具支援的草稿或定位設定。');
@@ -84,7 +84,7 @@
   function applySnapshot(raw, kind) {
     const ids = snapshotTemplateIds(raw, kind);
     for (const id of ids) {
-      state.settings[id] = cleanSettings(raw.settings?.[id]);
+      state.settings[id] = cleanSettings(raw.settings?.[id], id);
       state.overrides[id] = {};
       const map = window.TEMPLATES[id];
       for (const f of map.fields) {
@@ -247,6 +247,16 @@
     $('selectedStatus').textContent = state.selected ? fieldById(state.selected)?.label || '' : '點選欄位即可填寫';
   }
   function hideExportResult() { $('exportResult').classList.add('hidden'); }
+  function updateExportControls() {
+    const printMode = settings().outputMode === 'print';
+    $('exportMode').value = printMode ? 'print' : 'standard';
+    $('exportMode').disabled = !state.ready || state.exporting;
+    $('exportButton').disabled = !state.ready || state.exporting;
+    $('templateSwitch').querySelectorAll('button').forEach(button => { button.disabled = state.exporting; });
+    $('manageButton').disabled = state.exporting;
+    $('exportButton').querySelector('span:last-child').textContent = state.exporting ? '正在輸出…' : printMode ? '匯出相容 PDF' : '匯出一般 PDF';
+    $('exportModeHint').textContent = printMode ? '列印相容：整頁影像，文字無法選取；可另下載 JPG。' : '一般 PDF：保留可選取文字與原稿版面。';
+  }
   function dataChanged() { mirrorApplicant(); state.dirty = true; hideExportResult(); renderPreview(); persist(); }
   function selectField(id, focusInput = false, scrollPreview = false) {
     const f = fieldById(id); if (!f) return; state.selected = id;
@@ -273,6 +283,7 @@
     const path = template().preview || 'assets/' + id + '.png'; $('templateImage').src = window.EMBEDDED_ASSETS?.[path] ? 'data:image/png;base64,' + window.EMBEDDED_ASSETS[path] : path;
     $('templateImage').alt = template().title + '原稿';
     $('overlay').setAttribute('viewBox','0 0 ' + template().width + ' ' + template().height);
+    updateExportControls();
     renderForm(); if (state.mode === 'calibrate') renderCalibration(); renderPreview(); resizePaper();
     $('formScroll').scrollTop = 0; $('previewScroll').scrollTop = 0;
   }
@@ -283,6 +294,7 @@
   $('templateSwitch').innerHTML = templateIds.map(id => { const t = window.TEMPLATES[id]; return '<button type="button" class="template-tab" data-template="' + esc(id) + '" aria-pressed="false"><span>' + esc(t.shortTitle || t.title) + '<small class="template-version">' + esc(t.version) + ' 版</small></span><span class="mini-tag">' + t.fields.length + ' 欄</span></button>'; }).join('');
   $('templateSwitch').addEventListener('click',e=>{ const b = e.target.closest('[data-template]'); if (b) setTemplate(b.dataset.template); });
   document.querySelectorAll('[data-mode]').forEach(b=>b.addEventListener('click',()=>setMode(b.dataset.mode)));
+  $('exportMode').addEventListener('change',e=>{ settings().outputMode = e.target.value === 'print' ? 'print' : 'standard'; hideExportResult(); updateExportControls(); persist(); });
   $('formFields').addEventListener('input', e => {
     const id = e.target.dataset.field; const f = fieldById(id); if (!f || f.type === 'checkbox') return;
     values()[id] = e.target.value; dataChanged();
@@ -358,21 +370,27 @@
   function dateStamp() { return new Intl.DateTimeFormat('sv-SE',{timeZone:'Asia/Taipei',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date()).replace(/-/g,''); }
   function fileSafe(s) { return String(s).replace(/[\\/:*?"<>|\u0000-\u001f]/g,'_').slice(0,45); }
   $('exportButton').addEventListener('click', async () => {
-    if (!state.ready) return;
+    if (!state.ready || state.exporting) return;
     if (state.issues.length) { const first = state.issues[0]; selectField(first.fieldId,true,true); await showMessage('請先調整這些欄位',state.issues.map(i=>'• '+i.label+'\n  '+i.message).join('\n\n') + '\n\n可縮短內容，或在「位置校正」調整欄位寬度、高度與字型。'); return; }
     if (state.demo[state.templateId] && !await showMessage('輸出範例報告？','這份報告由範例帶入，請確認資料已替換。輸出檔名會加上「範例」，方便辨識。',{confirm:'輸出範例 PDF',cancel:true})) return;
-    const button = $('exportButton'); button.disabled = true; button.querySelector('span:last-child').textContent = '正在輸出…';
     const selectedTemplate = template(), selectedValues = {...values()}, selectedSettings = {...settings()}, selectedOverrides = JSON.parse(JSON.stringify(overrides())), isDemo = state.demo[state.templateId];
+    const printMode = selectedSettings.outputMode === 'print';
+    state.exporting = true; updateExportControls(); hideExportResult();
     try {
       await new Promise(r=>setTimeout(r,40));
-      const result = await PdfEngine.createPdf({template:selectedTemplate,values:selectedValues,settings:selectedSettings,overrides:selectedOverrides});
-      const name = (isDemo ? '範例_' : '') + selectedTemplate.title + '_' + selectedTemplate.version + (selectedValues.applicant_name ? '_' + fileSafe(selectedValues.applicant_name) : '') + '_' + dateStamp() + '.pdf';
+      const makePdf = printMode ? PdfEngine.createPrintPdf : PdfEngine.createPdf;
+      const result = await makePdf({template:selectedTemplate,values:selectedValues,settings:selectedSettings,overrides:selectedOverrides});
+      const name = (isDemo ? '範例_' : '') + selectedTemplate.title + (printMode ? '_列印相容' : '') + '_' + selectedTemplate.version + (selectedValues.applicant_name ? '_' + fileSafe(selectedValues.applicant_name) : '') + '_' + dateStamp() + '.pdf';
       if (lastPdfUrl) URL.revokeObjectURL(lastPdfUrl);
+      if (lastPrintImageUrl) { URL.revokeObjectURL(lastPrintImageUrl); lastPrintImageUrl = null; }
       lastPdfUrl = URL.createObjectURL(new Blob([result.bytes],{type:'application/pdf'}));
       $('downloadPdfLink').href = lastPdfUrl; $('downloadPdfLink').download = name; $('openPdfLink').href = lastPdfUrl; $('exportFileName').textContent = name; $('exportResult').classList.remove('hidden');
-      $('downloadPdfLink').click(); toast('PDF 已產生；可在下方重新下載或開啟檢查');
+      $('downloadPrintImageLink').classList.toggle('hidden',!result.imageBytes);
+      if (result.imageBytes) { lastPrintImageUrl = URL.createObjectURL(new Blob([result.imageBytes],{type:result.imageMimeType || 'image/jpeg'})); $('downloadPrintImageLink').href = lastPrintImageUrl; $('downloadPrintImageLink').download = name.replace(/\.pdf$/,'.jpg'); }
+      else $('downloadPrintImageLink').removeAttribute('href');
+      $('downloadPdfLink').click(); toast(printMode ? '列印相容 PDF 已產生，也可下載同版面的 JPG' : 'PDF 已產生；可在下方重新下載或開啟檢查');
     } catch (error) { console.error(error); await showMessage('無法輸出 PDF',error.message || '輸出時發生錯誤，請重新開啟工具。'); }
-    finally { button.disabled = false; button.querySelector('span:last-child').textContent = '匯出 PDF'; }
+    finally { state.exporting = false; updateExportControls(); }
   });
   function updateCopySources() {
     const previous = $('copySourceSelect').value;
@@ -399,7 +417,7 @@
   $('draftFile').addEventListener('change',e=>importFile(e.target,'draft')); $('layoutFile').addEventListener('change',e=>importFile(e.target,'layout'));
   $('rememberDraft').addEventListener('change',e=>{ state.remember = e.target.checked; putStored(STORAGE_REMEMBER,state.remember ? 'yes' : null); if (!state.remember) putStored(STORAGE_DRAFT,null); else persist(); toast(state.remember ? '已開啟本機草稿記憶' : '已刪除本機儲存的草稿，目前畫面資料仍保留'); });
   $('clearButton').addEventListener('click',async()=>{ if (!hasData(state.templateId)) return toast('這份報告目前沒有填寫資料'); if (!await showMessage('清空這份報告？','僅清空「'+template().title+'」的填寫資料。其他報告與欄位定位設定會保留。',{confirm:'清空本表',cancel:true})) return; state.values[state.templateId] = {}; state.demo[state.templateId] = false; dataChanged(); renderForm(); toast('本表資料已清空'); });
-  $('resetLayoutButton').addEventListener('click',async()=>{ if (!await showMessage('還原預設定位？','本表的位置、字級、勾勾大小與偏移會回到預先校對的設定。填寫資料會保留。',{confirm:'還原定位',cancel:true})) return; state.overrides[state.templateId] = {}; state.settings[state.templateId] = defaults(); renderCalibration(); renderPreview(); persist(); toast('本表定位已還原'); });
+  $('resetLayoutButton').addEventListener('click',async()=>{ if (!await showMessage('還原預設定位？','本表的位置、字級、勾勾大小與偏移會回到預先校對的設定。填寫資料會保留。',{confirm:'還原定位',cancel:true})) return; state.overrides[state.templateId] = {}; state.settings[state.templateId] = {...defaults(state.templateId),outputMode:settings().outputMode}; renderCalibration(); renderPreview(); persist(); toast('本表定位已還原'); });
   $('copyBasicButton').addEventListener('click',async()=>{
     const other = $('copySourceSelect').value;
     if (!window.TEMPLATES[other] || other === state.templateId) return;
@@ -451,8 +469,8 @@
     finally { e.target.value = ''; }
   });
   $('defaultFontButton').addEventListener('click',async()=>{ PdfEngine.resetFont(); await loadBrowserFont(); state.customFont = ''; $('fontLabel').textContent = '內附中文字型 · Droid Sans Fallback'; renderPreview(); renderFieldProperties(); toast('已還原內附中文字型'); });
-  $('helpButton').addEventListener('click',()=>showMessage('使用說明','1. 選擇新版合併報告、原版壽險或產險，依段落輸入資料。點右側欄位可跳至對應輸入欄，方框也可直接點選。\n\n2. 日期使用民國年，金額依原表標示的元或萬元輸入；不需要的欄位留白即可。\n\n3. 點「位置校正」可拖曳欄位、拖右下角調整大小，或輸入 X、Y、寬、高與字級。1 pt 約 0.353 mm。\n\n4. 點「匯出 PDF」下載完成的報告。綠色欄位提示與校正框不會出現在 PDF。原稿與填寫文字保留在同一份 PDF。\n\n5. 草稿下載成 JSON，可下次匯入續填。若未開啟本機記憶，重新整理或關閉頁面後，未下載的填寫內容會消失。定位設定仍會保留於可用的瀏覽器儲存空間。\n\n6. 請以 PDF 閱讀器列印，設定 A4、實際大小／100%，關閉「符合頁面」縮放。\n\n7. 簽名欄輸入只會產生打字文字；需要親簽或用印時請留白。\n\n離線版：下載 HTML 後使用 Chrome 或 Edge 開啟，不需要安裝 Python，也不需連網載入字型。'));
-  window.addEventListener('beforeunload',e=>{ const saved = state.remember && putStored(STORAGE_DRAFT,JSON.stringify(snapshot())); if (state.dirty && !saved) { e.preventDefault(); e.returnValue = ''; } });
+  $('helpButton').addEventListener('click',()=>showMessage('使用說明','1. 選擇新版合併報告、原版壽險或產險，依段落輸入資料。點右側欄位可跳至對應輸入欄，方框也可直接點選。\n\n2. 日期使用民國年，金額依原表標示的元或萬元輸入；不需要的欄位留白即可。\n\n3. 點「位置校正」可拖曳欄位、拖右下角調整大小，或輸入 X、Y、寬、高與字級。1 pt 約 0.353 mm。\n\n4. 選擇「列印相容 PDF」或「一般 PDF」再匯出。相容模式會合成整頁影像，可另外下載 JPG，適合部分印表機列印卡住時使用；文字無法選取。綠色欄位提示與校正框不會出現在 PDF。原稿與填寫文字保留在同一份 PDF。\n\n5. 草稿下載成 JSON，可下次匯入續填。若未開啟本機記憶，重新整理或關閉頁面後，未下載的填寫內容會消失。定位設定仍會保留於可用的瀏覽器儲存空間。\n\n6. 請以 PDF 閱讀器列印，設定 A4、實際大小／100%，關閉「符合頁面」縮放。\n\n7. 簽名欄輸入只會產生打字文字；需要親簽或用印時請留白。\n\n離線版：下載 HTML 後使用 Chrome 或 Edge 開啟，不需要安裝 Python，也不需連網載入字型。'));
+  window.addEventListener('beforeunload',e=>{ putStored(STORAGE_LAYOUT,JSON.stringify(snapshot('layout'))); const saved = state.remember && putStored(STORAGE_DRAFT,JSON.stringify(snapshot())); if (state.dirty && !saved) { e.preventDefault(); e.returnValue = ''; } });
   async function initialize() {
     try {
       const layout = getStored(STORAGE_LAYOUT); if (layout) { try { applySnapshot(JSON.parse(layout),'layout'); } catch (_) {} }

@@ -1133,5 +1133,7 @@
     "原表的簽名及公司章需依業務實際規定處理，文字欄僅為註記，預設留空。"
   ],
   "shortTitle": "產險分析報告",
-  "version": "113.12"
+  "version": "113.12",
+  "printPreview": "assets/property-print.png",
+  "printDpi": 300
 }

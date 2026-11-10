@@ -1405,5 +1405,7 @@
   ],
   "width": 595.32,
   "height": 841.92,
-  "shortTitle": "壽險分析報告"
+  "shortTitle": "壽險分析報告",
+  "printPreview": "assets/life-print.png",
+  "printDpi": 300
 }
