@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="產險、壽險書面分析報告：輸入資料、精準定位、即時預覽與 PDF 匯出。資料在自己的瀏覽器中處理。">
+  <meta name="theme-color" content="#116b5e">
+  <title>保險表單工作台 · 書面分析報告</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%23116b5e'/%3E%3Cpath d='M20 15h17l9 9v25H20z' fill='none' stroke='white' stroke-width='3'/%3E%3Cpath d='m25 35 5 5 10-12' fill='none' stroke='white' stroke-width='3'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="app-header">
+      <a class="brand" href="#" aria-label="保險表單工作台首頁">
+        <span class="brand-mark"><svg viewBox="0 0 24 24" fill="none"><path d="M6 3h9l4 4v14H6z" stroke="currentColor" stroke-width="1.6"/><path d="m9 13 2.4 2.5 4.5-5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+        <span><strong>保險表單工作台</strong><small>書面分析報告 · 113.12 版</small></span>
+      </a>
+      <div class="header-actions">
+        <span class="local-badge"><span></span> 本機處理</span>
+        <button class="button ghost" id="manageButton" type="button"><span class="icon" data-icon="folder"></span><span>草稿與設定</span></button>
+        <button class="button primary" id="exportButton" type="button" disabled><span class="icon" data-icon="download"></span><span>匯出 PDF</span></button>
+      </div>
+    </header>
+
+    <div class="workspace-bar">
+      <div class="template-switch" aria-label="選擇報告">
+        <button type="button" class="template-tab active" data-template="life"><span class="icon" data-icon="person"></span>壽險分析報告<span class="mini-tag">104 欄</span></button>
+        <button type="button" class="template-tab" data-template="property"><span class="icon" data-icon="shield"></span>產險分析報告<span class="mini-tag">87 欄</span></button>
+      </div>
+      <div class="mode-switch" role="group" aria-label="工作模式">
+        <button type="button" data-mode="fill" class="active"><span class="icon" data-icon="edit"></span>填寫資料</button>
+        <button type="button" data-mode="calibrate"><span class="icon" data-icon="target"></span>位置校正</button>
+      </div>
+    </div>
+
+    <main class="workspace">
+      <aside class="editor-panel" aria-label="資料輸入">
+        <div id="fillPanel" class="panel-view">
+          <div class="panel-heading"><div><span class="eyebrow">YOUR REPORT</span><h1>填寫資料</h1></div><span id="filledCount" class="count-badge">0 個已填</span></div>
+          <div class="section-nav" id="sectionNav" aria-label="報告段落"></div>
+          <div class="form-scroll" id="formScroll"><div id="formFields"></div></div>
+          <div class="editor-footer"><button class="text-button" id="sampleButton" type="button"><span class="icon" data-icon="spark"></span>帶入範例</button><button class="text-button muted" id="clearButton" type="button">清空本表</button></div>
+        </div>
+        <div id="calibrationPanel" class="panel-view hidden">
+          <div class="panel-heading"><div><span class="eyebrow">PRECISE PLACEMENT</span><h1>位置校正</h1></div><span class="count-badge accent">已預先定位</span></div>
+          <div class="calibration-scroll">
+            <div class="note-box"><span class="icon" data-icon="target"></span><p>點選右側欄位後拖曳調整。使用方向鍵微移 1 pt，按住 Shift 微移 0.1 pt。</p></div>
+            <label class="field-label" for="fieldSelect">選定欄位</label><select id="fieldSelect" class="full-input"></select>
+            <div id="fieldProperties"></div>
+            <div class="calibration-divider"></div>
+            <h2 class="subheading">整份報告</h2>
+            <div class="range-label"><label for="fontScale">文字大小</label><output id="fontScaleValue">100%</output></div><input id="fontScale" type="range" min="65" max="140" step="5" value="100">
+            <div class="settings-grid">
+              <label>勾勾大小 <span>pt</span><input id="checkSize" type="number" min="3" max="16" step="0.5" value="8"></label>
+              <label>輸出顏色<select id="inkColor"><option value="#111111">黑色</option><option value="#153f75">深藍色</option></select></label>
+              <label>全表水平偏移 <span>pt</span><input id="offsetX" type="number" min="-36" max="36" step="0.5" value="0"></label>
+              <label>全表垂直偏移 <span>pt</span><input id="offsetY" type="number" min="-36" max="36" step="0.5" value="0"></label>
+            </div>
+            <p class="hint">1 pt 約為 0.353 mm。字級會依欄位寬度自動縮小；校正框不會出現在 PDF。</p>
+            <div class="calibration-divider"></div>
+            <h2 class="subheading">中文字型</h2><p id="fontLabel" class="font-label">內附中文字型 · Droid Sans Fallback</p>
+            <div class="row-buttons"><button class="button small" id="customFontButton" type="button">載入 TTF／OTF</button><button class="text-button" id="defaultFontButton" type="button">還原預設</button></div>
+            <p class="hint">自訂字型只適用本次開啟。請使用具有所需繁體中文字的字型。</p>
+            <button class="button full-width" id="resetLayoutButton" type="button">還原本表所有定位</button>
+          </div>
+          <div class="editor-footer"><span class="autosave-status"><span></span>定位設定儲存於此瀏覽器</span></div>
+        </div>
+      </aside>
+
+      <section class="preview-panel" aria-label="PDF 即時預覽">
+        <div class="preview-toolbar"><div class="preview-title"><span class="icon" data-icon="document"></span><strong>原稿預覽</strong><span class="page-number">1 / 1</span><span class="demo-badge hidden" id="demoBadge">範例資料</span></div><div class="preview-tools"><label class="guide-control"><input id="showGuides" type="checkbox" checked>顯示欄位</label><div class="zoom-control"><button type="button" id="zoomOut" aria-label="縮小">−</button><select id="zoomSelect" aria-label="預覽倍率"><option value="fit">適合寬度</option value="75">75%</option><option value="100">100%</option><option value="125">125%</option><option value="150">150%</option></select><button type="button" id="zoomIn" aria-label="放大">＋</button></div></div></div>
+        <div class="preview-scroll" id="previewScroll"><div class="preview-context"><span id="previewFileName">壽險書面分析報告</span><span>A4 · 直式</span></div><div class="page-stage" id="pageStage"><div class="paper" id="paper" tabindex="0" aria-label="報告欄位預覽，點選欄位編輯"><img id="templateImage" alt="原始分析報告版面" draggable="false"><svg id="overlay" viewBox="0 0 595.32 841.92" aria-label="填寫欄位"></svg></div></div><div class="preview-caption"><span class="icon" data-icon="lock"></span>填寫資料在瀏覽器內處理，匯出保留原始 PDF 版面。</div></div>
+        <div id="exportResult" class="export-result hidden"><div><strong>PDF 已產生</strong><span id="exportFileName"></span></div><a id="downloadPdfLink" class="button small primary">下載 PDF</a><a id="openPdfLink" class="text-button" target="_blank" rel="noopener">開啟檢查</a></div>
+        <div class="preview-status"><span id="previewStatus">正在載入範本與中文字型…</span><span id="selectedStatus">點選欄位即可填寫</span></div>
+      </section>
+    </main>
+  </div>
+
+  <dialog id="manageDialog" class="modal"><div class="modal-heading"><div><span class="eyebrow">SAVE & CONTINUE</span><h2>草稿與設定</h2></div><button type="button" class="icon-button" data-close="manageDialog" aria-label="關閉">×</button></div>
+    <p class="modal-lead">儲存一份草稿，下一次從同樣的位置繼續。</p>
+    <div class="manage-card"><span class="card-icon" data-icon="folder"></span><div><h3>填寫資料草稿</h3><p>包含兩份報告的資料與定位設定。下載後自行保管，可在另一台電腦匯入。</p><div class="row-buttons"><button class="button small" id="saveDraftButton" type="button">下載草稿 JSON</button><button class="text-button" id="loadDraftButton" type="button">匯入草稿</button></div></div></div>
+    <div class="manage-card"><span class="card-icon" data-icon="target"></span><div><h3>欄位定位設定</h3><p>只儲存位置、大小及輸出設定，不包含填寫資料。</p><div class="row-buttons"><button class="button small" id="saveLayoutButton" type="button">下載定位 JSON</button><button class="text-button" id="loadLayoutButton" type="button">匯入定位</button></div></div></div>
+    <div class="manage-card" id="offlineCard"><span class="card-icon" data-icon="download"></span><div><h3>下載到電腦使用</h3><p>一個 HTML 檔案，已內含範本、中文字型與程式。下載後可直接離線開啟。</p><a class="button small" href="portable.html" download="保險報告填寫工具_離線版.html">下載離線版 HTML</a></div></div>
+    <label class="remember-option"><input type="checkbox" id="rememberDraft"><span><strong>在此瀏覽器記住填寫資料</strong><small>預設關閉。關閉時會刪除本工具已儲存的本機草稿。</small></span></label>
+    <div class="manage-bottom"><button class="text-button" id="copyBasicButton" type="button">將另一份的基本資料帶入本表</button><button class="text-button" id="helpButton" type="button">使用說明</button></div>
+  </dialog>
+
+  <dialog id="messageDialog" class="modal compact"><div class="modal-heading"><h2 id="messageTitle"></h2><button type="button" class="icon-button" data-close="messageDialog" aria-label="關閉">×</button></div><div id="messageBody" class="message-body"></div><div class="modal-actions"><button class="button" id="messageCancel" type="button">取消</button><button class="button primary" id="messageConfirm" type="button">確定</button></div></dialog>
+  <input class="hidden" id="draftFile" type="file" accept="application/json,.json"><input class="hidden" id="layoutFile" type="file" accept="application/json,.json"><input class="hidden" id="fontFile" type="file" accept=".ttf,.otf">
+  <div id="toast" class="toast" role="status"></div><div class="loading-overlay" id="loadingOverlay"><div class="spinner"></div><strong>正在準備表單工作台</strong><span>載入兩份原稿與內附中文字型</span></div>
+  <script src="assets/pdf-lib.min.js"></script><script src="assets/fontkit.umd.min.js"></script><script src="templates.js"></script><script src="engine.js"></script><script src="app.js"></script>
+</body>
+</html>
