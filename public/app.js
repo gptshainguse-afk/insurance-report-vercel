@@ -6,9 +6,11 @@
   const STORAGE_LAYOUT = 'insurance-report-layout-v1';
   const STORAGE_DRAFT = 'insurance-report-draft-v1';
   const STORAGE_REMEMBER = 'insurance-report-remember-v1';
-  const state = { templateId: 'life', mode: 'fill', section: 'basic', selected: '', zoom: 'fit', ready: false,
-    values: { life: {}, property: {} }, overrides: { life: {}, property: {} }, settings: { life: defaults(), property: defaults() },
-    demo: { life: false, property: false }, remember: false, guides: true, issues: [], customFont: '', dirty: false };
+  const templateIds = Object.keys(window.TEMPLATES);
+  const perTemplate = factory => Object.fromEntries(templateIds.map(id => [id, factory(id)]));
+  const state = { templateId: window.TEMPLATES.unified ? 'unified' : templateIds[0], mode: 'fill', section: 'basic', selected: '', zoom: 'fit', ready: false,
+    values: perTemplate(() => ({})), overrides: perTemplate(() => ({})), settings: perTemplate(defaults),
+    demo: perTemplate(() => false), remember: false, guides: true, issues: [], customFont: '', dirty: false };
   let activeFontFace = null, toastTimer, drag = null, messageResolve = null, persistTimer, lastPdfUrl = null;
   const icons = {
     folder: '<path d="M3 7a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v9H3z"/>',
@@ -28,7 +30,7 @@
   const settings = () => state.settings[state.templateId];
   const overrides = () => state.overrides[state.templateId];
   const fieldById = id => template().fields.find(f => f.id === id);
-  const hasData = id => Object.values(state.values[id]).some(v => v !== '' && v != null && v !== false);
+  const hasData = id => Object.values(state.values[id] || {}).some(v => v !== '' && v != null && v !== false);
   const finite = (x, d) => Number.isFinite(Number(x)) ? Number(x) : d;
   const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
   function getStored(key) { try { return localStorage.getItem(key); } catch (_) { return null; } }
@@ -49,7 +51,7 @@
   document.querySelector('.brand').addEventListener('click', e => { e.preventDefault(); $('formScroll').scrollTop = 0; });
 
   function snapshot(kind = 'draft') {
-    const result = { format: 'insurance-report-studio', version: 1, kind, templateVersion: '113.12', exportedAt: new Date().toISOString(), selectedTemplate: state.templateId, settings: state.settings, overrides: state.overrides };
+    const result = { format: 'insurance-report-studio', version: 2, kind, templateVersions: perTemplate(id => window.TEMPLATES[id].version), exportedAt: new Date().toISOString(), selectedTemplate: state.templateId, settings: state.settings, overrides: state.overrides };
     if (kind === 'draft') { result.values = state.values; result.demo = state.demo; }
     return result;
   }
@@ -67,12 +69,22 @@
     return { fontSize: clamp(finite(raw.fontSize, 9), 5.85, 12.6), checkSize: clamp(finite(raw.checkSize, 8), 3, 16),
       color: /^#[0-9a-f]{6}$/i.test(raw.color || '') ? raw.color : '#111111', offsetX: clamp(finite(raw.offsetX, 0), -36, 36), offsetY: clamp(finite(raw.offsetY, 0), -36, 36) };
   }
+  function snapshotTemplateIds(raw, kind) {
+    if (!raw || raw.format !== 'insurance-report-studio' || ![1, 2].includes(raw.version)) throw new Error('檔案不是此工具支援的草稿或定位設定。');
+    if (raw.kind !== kind || (kind === 'draft' && (!raw.values || typeof raw.values !== 'object' || Array.isArray(raw.values)))) throw new Error('請選擇「下載' + (kind === 'draft' ? '草稿' : '定位') + ' JSON」所產生的檔案。');
+    const own = (object, key) => object && typeof object === 'object' && Object.prototype.hasOwnProperty.call(object, key);
+    const ids = templateIds.filter(id => (raw.version !== 1 || ['life', 'property'].includes(id)) && (own(raw.settings, id) || own(raw.overrides, id) || (kind === 'draft' && own(raw.values, id))));
+    if (!ids.length) throw new Error('檔案沒有可匯入的報告範本。');
+    for (const id of ids) {
+      const version = raw.version === 1 ? raw.templateVersion : raw.templateVersions?.[id];
+      if (version !== window.TEMPLATES[id].version) throw new Error(window.TEMPLATES[id].title + '的範本版本不符，無法套用定位。');
+    }
+    return ids;
+  }
   function applySnapshot(raw, kind) {
-    if (!raw || raw.format !== 'insurance-report-studio' || raw.version !== 1 || raw.templateVersion !== '113.12') throw new Error('檔案不是此工具的 113.12 版草稿或定位設定。');
-    if (kind === 'draft' && (raw.kind !== 'draft' || !raw.values)) throw new Error('請選擇「下載草稿 JSON」所產生的檔案。');
-    if (kind === 'layout' && raw.kind !== 'layout') throw new Error('請選擇「下載定位 JSON」所產生的檔案。');
-    for (const id of ['life', 'property']) {
-      if (raw.settings?.[id]) state.settings[id] = cleanSettings(raw.settings[id]);
+    const ids = snapshotTemplateIds(raw, kind);
+    for (const id of ids) {
+      state.settings[id] = cleanSettings(raw.settings?.[id]);
       state.overrides[id] = {};
       const map = window.TEMPLATES[id];
       for (const f of map.fields) {
@@ -93,7 +105,7 @@
         for (const f of map.fields) {
           const value = raw.values?.[id]?.[f.id];
           if (f.type === 'checkbox') { if (typeof value === 'boolean') state.values[id][f.id] = value; }
-          else if (typeof value === 'string' || typeof value === 'number') state.values[id][f.id] = String(value).slice(0, 4000);
+          else if ((typeof value === 'string' || typeof value === 'number') && (!f.options || f.options.includes(String(value)) || value === '')) state.values[id][f.id] = String(value).slice(0, 4000);
         }
         // A malformed import must not create contradictory radio-style answers.
         const seen = new Set();
@@ -104,12 +116,13 @@
         mirrorApplicant(id);
       }
     }
-    if (kind === 'draft' && ['life','property'].includes(raw.selectedTemplate)) state.templateId = raw.selectedTemplate;
+    if (kind === 'draft' && ids.includes(raw.selectedTemplate)) state.templateId = raw.selectedTemplate;
   }
   function mirrorApplicant(id = state.templateId) {
     const v = state.values[id]; if (!v.insured_same) return;
-    for (const key of ['name','representative','occupation','dob_y','dob_m','dob_d','sex_m','sex_f']) {
-      if (window.TEMPLATES[id].fields.some(f => f.id === 'insured_' + key)) v['insured_' + key] = v['applicant_' + key] ?? (key.startsWith('sex_') ? false : '');
+    const fieldIds = new Set(window.TEMPLATES[id].fields.map(f => f.id));
+    for (const key of ['name','representative','id','occupation','dob_y','dob_m','dob_d','sex_m','sex_f']) {
+      if (fieldIds.has('insured_' + key) && fieldIds.has('applicant_' + key)) v['insured_' + key] = v['applicant_' + key] ?? (key.startsWith('sex_') ? false : '');
     }
   }
   function groupLabel(f) {
@@ -118,14 +131,16 @@
     return ({category:'本次報告類別',insured_identity:'被保險人資料',relation:'要／被保人關係',purpose:'投保目的與需求',insurance_types:'欲投保保險種類',company_intro:'保險公司概況說明方式',recommend_reason:'建議保險公司理由',recommended_type:'保險商品／險種',coverage:'保障範圍'})[f.group] || '請選擇';
   }
   function shortLabel(f) { return f.label.includes('：') ? f.label.split('：').slice(1).join('：') : f.label; }
-  function isMirrored(f) { return !!values().insured_same && /^insured_(name|representative|occupation|dob_[ymd]|sex_[mf])$/.test(f.id); }
+  function isMirrored(f) { return !!values().insured_same && /^insured_(name|representative|id|occupation|dob_[ymd]|sex_[mf])$/.test(f.id) && template().fields.some(source => source.id === f.id.replace(/^insured_/, 'applicant_')); }
   function textControl(f, compact = false) {
     const label = compact ? (f.id.endsWith('_y') ? '民國年' : f.id.endsWith('_m') ? '月' : '日') : f.label;
     const inputmode = /(_[ymd]|amount|premium|years|corporate_id)$/.test(f.id) ? ' inputmode="decimal"' : '';
     const multiline = (overrides()[f.id]?.multiline ?? f.multiline) === true;
+    if (Array.isArray(f.options)) return '<div class="field-wrap' + (state.selected === f.id ? ' active-field' : '') + '" data-field-wrap="' + esc(f.id) + '"><label class="field-label" for="input-' + esc(f.id) + '">' + esc(label) + '</label><select id="input-' + esc(f.id) + '" data-field="' + esc(f.id) + '"><option value="">請選擇／留白</option>' + f.options.map(option => '<option value="' + esc(option) + '"' + (values()[f.id] === option ? ' selected' : '') + '>' + esc(option) + '</option>').join('') + '</select>' + (f.help ? '<p class="hint">' + esc(f.help) + '</p>' : '') + '</div>';
     return '<div class="field-wrap' + (state.selected === f.id ? ' active-field' : '') + '" data-field-wrap="' + esc(f.id) + '"><label class="field-label" for="input-' + esc(f.id) + '">' + esc(label) + '</label>' + (multiline ? '<textarea' : '<input type="text"') + ' id="input-' + esc(f.id) + '" data-field="' + esc(f.id) + '" autocomplete="off" maxlength="4000" placeholder="' + esc(f.placeholder || (compact ? label : '請輸入')) + '"' + inputmode + (isMirrored(f) ? ' disabled' : '') + (multiline ? '>' + esc(values()[f.id] || '') + '</textarea>' : ' value="' + esc(values()[f.id] || '') + '">') + (!compact && f.help ? '<p class="hint">' + esc(f.help) + '</p>' : '') + '</div>';
   }
   function checkboxGroup(fields, label) {
+    if (!fields.length) return '';
     const single = fields.every(f => f.exclusive);
     return '<fieldset class="check-group"><legend>' + esc(label || groupLabel(fields[0])) + '<span class="group-hint">' + (single ? '單選，可取消' : fields.length > 1 ? '可複選' : '') + '</span></legend><div class="check-options">' + fields.map(f => '<label class="check-chip" data-field-wrap="' + esc(f.id) + '"><input type="checkbox" data-field="' + esc(f.id) + '" id="input-' + esc(f.id) + '"' + (values()[f.id] ? ' checked' : '') + (isMirrored(f) ? ' disabled' : '') + '><span>' + esc(shortLabel(f)) + '</span></label>').join('') + '</div></fieldset>';
   }
@@ -151,7 +166,8 @@
     for (const [prefix, heading, number] of [['applicant','要保人','01'],['insured','被保險人','02']]) {
       html += '<div class="form-card"><h3 class="person-heading"><span class="person-index">' + number + '</span>' + heading + '</h3>';
       if (prefix === 'insured') html += checkboxGroup(fields.filter(f => ['insured_same','insured_roster'].includes(f.id)), '填寫方式');
-      for (const suffix of ['name','representative','occupation']) { const f = fields.find(f => f.id === prefix + '_' + suffix); if (f) html += textControl({...f,label:f.label.replace(/^要保人|^被保險人/,'')}); }
+      const ordinary = fields.filter(f => f.id.startsWith(prefix + '_') && !/_(dob_[ymd]|sex_[mf])$/.test(f.id) && !['insured_same','insured_roster'].includes(f.id));
+      html += groupFields(ordinary.map(f => ({...f, label: f.label.replace(/^要保人|^被保險人/, '')})));
       const dateFields = ['y','m','d'].map(c => fields.find(f => f.id === prefix + '_dob_' + c)).filter(Boolean);
       if (dateFields.length) html += dateGroup(dateFields, '出生日期');
       const sexFields = fields.filter(f => f.id.startsWith(prefix + '_sex_')); if (sexFields.length) html += checkboxGroup(sexFields, '性別');
@@ -160,7 +176,7 @@
     html += '<div class="form-card">' + groupFields(fields.filter(f => !f.id.startsWith('applicant_') && !f.id.startsWith('insured_'))) + '</div>';
     return html;
   }
-  function shortSection(s) { return ({category:'報告類別',basic:'基本資料',motor:'車籍資料',needs:'需求風險',premium:'保費支出',advice:'業務建議',recommendation:'業務建議',signature:'簽署資料'})[s.id] || s.title; }
+  function shortSection(s) { return ({category:'報告類別',basic:'基本資料',motor:'車籍資料',needs:'需求風險',premium:'保費支出',advice:'業務建議',recommendation:'業務建議',risk:'風險辨識',signature:'簽署資料'})[s.id] || s.title; }
   function renderNav() {
     $('sectionNav').innerHTML = template().sections.map((s,i) => '<button type="button" data-section="' + s.id + '" class="' + (state.section === s.id ? 'active' : '') + '"><span class="step">' + String(i + 1).padStart(2,'0') + '</span>' + esc(shortSection(s)) + '</button>').join('');
   }
@@ -172,6 +188,7 @@
     else {
       if (state.section === 'signature') html += '<p class="notice-line">簽名與公司章欄可留白供列印後簽署。填入文字只會產生打字註記。</p>';
       if (state.section === 'category') html += '<p class="form-subtitle">勾選本次報告所屬類別。</p>';
+      if (state.section === 'risk') html += '<p class="form-subtitle">依原表的各列問句選擇「是／否」，並自行確認客戶風險等級。</p>';
       html += groupFields(fields);
       if (state.section === 'signature') html += '<div class="inline-actions"><button type="button" class="text-button" id="todayButton">填入今天日期（民國）</button></div>';
     }
@@ -249,10 +266,12 @@
     renderPreview();
   }
   function setTemplate(id) {
+    if (!window.TEMPLATES[id]) return;
     state.templateId = id; state.section = window.TEMPLATES[id].sections[0].id; state.selected = ''; hideExportResult();
-    document.querySelectorAll('[data-template]').forEach(b=>b.classList.toggle('active',b.dataset.template === id));
-    $('previewFileName').textContent = template().title + ' · 113.12 版';
-    const path = 'assets/' + id + '.png'; $('templateImage').src = window.EMBEDDED_ASSETS?.[path] ? 'data:image/png;base64,' + window.EMBEDDED_ASSETS[path] : path;
+    document.querySelectorAll('[data-template]').forEach(b=>{ b.classList.toggle('active',b.dataset.template === id); b.setAttribute('aria-pressed',String(b.dataset.template === id)); });
+    $('previewFileName').textContent = template().title + ' · ' + template().version + ' 版';
+    const path = template().preview || 'assets/' + id + '.png'; $('templateImage').src = window.EMBEDDED_ASSETS?.[path] ? 'data:image/png;base64,' + window.EMBEDDED_ASSETS[path] : path;
+    $('templateImage').alt = template().title + '原稿';
     $('overlay').setAttribute('viewBox','0 0 ' + template().width + ' ' + template().height);
     renderForm(); if (state.mode === 'calibrate') renderCalibration(); renderPreview(); resizePaper();
     $('formScroll').scrollTop = 0; $('previewScroll').scrollTop = 0;
@@ -261,7 +280,8 @@
   function setZoom(z) { state.zoom = z; $('zoomSelect').value = z; resizePaper(); }
 
   $('sectionNav').addEventListener('click', e => { const b = e.target.closest('[data-section]'); if (!b) return; state.section = b.dataset.section; renderForm(); $('formScroll').scrollTop = 0; });
-  document.querySelectorAll('[data-template]').forEach(b=>b.addEventListener('click',()=>setTemplate(b.dataset.template)));
+  $('templateSwitch').innerHTML = templateIds.map(id => { const t = window.TEMPLATES[id]; return '<button type="button" class="template-tab" data-template="' + esc(id) + '" aria-pressed="false"><span>' + esc(t.shortTitle || t.title) + '<small class="template-version">' + esc(t.version) + ' 版</small></span><span class="mini-tag">' + t.fields.length + ' 欄</span></button>'; }).join('');
+  $('templateSwitch').addEventListener('click',e=>{ const b = e.target.closest('[data-template]'); if (b) setTemplate(b.dataset.template); });
   document.querySelectorAll('[data-mode]').forEach(b=>b.addEventListener('click',()=>setMode(b.dataset.mode)));
   $('formFields').addEventListener('input', e => {
     const id = e.target.dataset.field; const f = fieldById(id); if (!f || f.type === 'checkbox') return;
@@ -346,7 +366,7 @@
     try {
       await new Promise(r=>setTimeout(r,40));
       const result = await PdfEngine.createPdf({template:selectedTemplate,values:selectedValues,settings:selectedSettings,overrides:selectedOverrides});
-      const name = (isDemo ? '範例_' : '') + selectedTemplate.title + (selectedValues.applicant_name ? '_' + fileSafe(selectedValues.applicant_name) : '') + '_' + dateStamp() + '.pdf';
+      const name = (isDemo ? '範例_' : '') + selectedTemplate.title + '_' + selectedTemplate.version + (selectedValues.applicant_name ? '_' + fileSafe(selectedValues.applicant_name) : '') + '_' + dateStamp() + '.pdf';
       if (lastPdfUrl) URL.revokeObjectURL(lastPdfUrl);
       lastPdfUrl = URL.createObjectURL(new Blob([result.bytes],{type:'application/pdf'}));
       $('downloadPdfLink').href = lastPdfUrl; $('downloadPdfLink').download = name; $('openPdfLink').href = lastPdfUrl; $('exportFileName').textContent = name; $('exportResult').classList.remove('hidden');
@@ -354,42 +374,70 @@
     } catch (error) { console.error(error); await showMessage('無法輸出 PDF',error.message || '輸出時發生錯誤，請重新開啟工具。'); }
     finally { button.disabled = false; button.querySelector('span:last-child').textContent = '匯出 PDF'; }
   });
-  $('manageButton').addEventListener('click',()=>{ $('rememberDraft').checked = state.remember; $('manageDialog').showModal(); });
-  $('saveDraftButton').addEventListener('click',()=>{ download(JSON.stringify(snapshot(),null,2),'保險報告草稿_'+dateStamp()+'.json','application/json'); state.dirty = false; toast('已下載兩份報告的草稿'); });
-  $('saveLayoutButton').addEventListener('click',()=>{ download(JSON.stringify(snapshot('layout'),null,2),'保險報告定位_113.12.json','application/json'); toast('已下載定位設定，不包含填寫資料'); });
+  function updateCopySources() {
+    const previous = $('copySourceSelect').value;
+    const others = templateIds.filter(id => id !== state.templateId);
+    $('copySourceSelect').innerHTML = others.map(id => '<option value="' + esc(id) + '">' + esc(window.TEMPLATES[id].shortTitle || window.TEMPLATES[id].title) + ' · ' + esc(window.TEMPLATES[id].version) + ' 版</option>').join('');
+    $('copySourceSelect').value = others.includes(previous) ? previous : others.find(hasData) || others[0] || '';
+  }
+  $('manageButton').addEventListener('click',()=>{ $('rememberDraft').checked = state.remember; updateCopySources(); $('manageDialog').showModal(); });
+  $('saveDraftButton').addEventListener('click',()=>{ download(JSON.stringify(snapshot(),null,2),'保險報告草稿_'+dateStamp()+'.json','application/json'); state.dirty = false; toast('已下載全部 ' + templateIds.length + ' 份報告的草稿'); });
+  $('saveLayoutButton').addEventListener('click',()=>{ download(JSON.stringify(snapshot('layout'),null,2),'保險報告定位_多範本_'+dateStamp()+'.json','application/json'); toast('已下載定位設定，不包含填寫資料'); });
   $('loadDraftButton').addEventListener('click',()=>$('draftFile').click()); $('loadLayoutButton').addEventListener('click',()=>$('layoutFile').click());
   async function importFile(input,kind) {
     const file = input.files[0]; if (!file) return;
     try {
       if (file.size > 5 * 1024 * 1024) throw new Error('JSON 檔案過大，請選擇由此工具產生的草稿或定位檔。');
       const raw = JSON.parse(await file.text());
-      if (kind === 'draft' && (hasData('life') || hasData('property')) && !await showMessage('匯入並取代目前資料？','匯入後會取代兩份報告的填寫內容。若需要保留，請先下載目前草稿。',{confirm:'匯入並取代',cancel:true})) return;
-      if (kind === 'layout' && !await showMessage('套用定位設定？','兩份報告的位置與大小設定會替換為檔案內的設定。填寫資料會保留。',{confirm:'套用設定',cancel:true})) return;
+      const ids = snapshotTemplateIds(raw,kind), names = ids.map(id => window.TEMPLATES[id].shortTitle || window.TEMPLATES[id].title).join('、');
+      if (kind === 'draft' && ids.some(hasData) && !await showMessage('匯入並取代目前資料？','將取代：' + names + '的填寫資料與定位。檔案未包含的範本會保留。若要保留目前內容，請先下載草稿。',{confirm:'匯入並取代',cancel:true})) return;
+      if (kind === 'layout' && !await showMessage('套用定位設定？','將套用：' + names + '的位置與大小設定。填寫資料及檔案未包含的範本會保留。',{confirm:'套用設定',cancel:true})) return;
       applySnapshot(raw,kind); persist(); setTemplate(state.templateId); $('manageDialog').close(); toast(kind === 'draft' ? '草稿已匯入' : '定位設定已套用');
     } catch (error) { await showMessage('無法匯入檔案',error.message || '檔案內容無法辨識。'); }
     finally { input.value = ''; }
   }
   $('draftFile').addEventListener('change',e=>importFile(e.target,'draft')); $('layoutFile').addEventListener('change',e=>importFile(e.target,'layout'));
   $('rememberDraft').addEventListener('change',e=>{ state.remember = e.target.checked; putStored(STORAGE_REMEMBER,state.remember ? 'yes' : null); if (!state.remember) putStored(STORAGE_DRAFT,null); else persist(); toast(state.remember ? '已開啟本機草稿記憶' : '已刪除本機儲存的草稿，目前畫面資料仍保留'); });
-  $('clearButton').addEventListener('click',async()=>{ if (!hasData(state.templateId)) return toast('這份報告目前沒有填寫資料'); if (!await showMessage('清空這份報告？','僅清空「'+template().title+'」的填寫資料。另一份報告與欄位定位設定會保留。',{confirm:'清空本表',cancel:true})) return; state.values[state.templateId] = {}; state.demo[state.templateId] = false; dataChanged(); renderForm(); toast('本表資料已清空'); });
+  $('clearButton').addEventListener('click',async()=>{ if (!hasData(state.templateId)) return toast('這份報告目前沒有填寫資料'); if (!await showMessage('清空這份報告？','僅清空「'+template().title+'」的填寫資料。其他報告與欄位定位設定會保留。',{confirm:'清空本表',cancel:true})) return; state.values[state.templateId] = {}; state.demo[state.templateId] = false; dataChanged(); renderForm(); toast('本表資料已清空'); });
   $('resetLayoutButton').addEventListener('click',async()=>{ if (!await showMessage('還原預設定位？','本表的位置、字級、勾勾大小與偏移會回到預先校對的設定。填寫資料會保留。',{confirm:'還原定位',cancel:true})) return; state.overrides[state.templateId] = {}; state.settings[state.templateId] = defaults(); renderCalibration(); renderPreview(); persist(); toast('本表定位已還原'); });
   $('copyBasicButton').addEventListener('click',async()=>{
-    const other = state.templateId === 'life' ? 'property' : 'life';
-    if (!hasData(other)) return showMessage('另一份報告尚無資料','請先在另一份報告填寫基本資料。');
-    if (!await showMessage('帶入另一份的基本資料？','目前報告的要保人、被保險人與簽署／業務員資料，會以另一份報告的對應內容覆寫。保險需求與保費不會複製。',{confirm:'帶入基本資料',cancel:true})) return;
-    const otherFieldIds = new Set(window.TEMPLATES[other].fields.map(f=>f.id));
-    for (const f of template().fields) if ((f.section === 'basic' || f.section === 'signature') && otherFieldIds.has(f.id)) values()[f.id] = state.values[other][f.id] ?? (f.type === 'checkbox' ? false : '');
+    const other = $('copySourceSelect').value;
+    if (!window.TEMPLATES[other] || other === state.templateId) return;
+    if (!hasData(other)) return showMessage('來源報告尚無資料','請先填寫選定的來源報告，或選擇其他來源。');
+    if (!await showMessage('帶入基本資料？','來源：' + (window.TEMPLATES[other].shortTitle || window.TEMPLATES[other].title) + '。本表的要保人、被保險人與簽署／業務員資料，會以對應內容覆寫。只帶入共用基本欄位，請確認新版與舊版關係選項的差異。',{confirm:'帶入基本資料',cancel:true})) return;
     const relMap = {relation_self:'relationship_self',relation_parent:'relationship_parents',relation_spouse:'relationship_spouse',relation_child:'relationship_children',relation_sibling:'relationship_siblings',relation_grandparent:'relationship_grandparents',relation_grandchild:'relationship_grandchildren',relation_employee:'relationship_employee',relation_representative:'relationship_representative',relation_other:'relationship_other',relation_other_text:'relationship_other_text'};
-    for (const [property,life] of Object.entries(relMap)) values()[state.templateId === 'life' ? life : property] = state.values[other][other === 'life' ? life : property] ?? (property.endsWith('text') ? '' : false);
+    const canonical = id => relMap[id] || id;
+    const sourceFields = new Map(window.TEMPLATES[other].fields.map(f => [canonical(f.id), f]));
+    const sourceValues = state.values[other];
+    const sourceValue = id => sourceValues[sourceFields.get(id)?.id];
+    const relationFields = template().fields.filter(f => /^relationship_|^relation_/.test(f.id));
+    for (const f of relationFields) values()[f.id] = f.type === 'checkbox' ? false : '';
+    for (const f of template().fields) {
+      if (!['basic','signature'].includes(f.section) && f.id !== 'insured_id') continue;
+      const source = sourceFields.get(canonical(f.id));
+      if (source && source.type === f.type) values()[f.id] = sourceValues[source.id] ?? (f.type === 'checkbox' ? false : '');
+    }
+    // The older property form has only an insured ID. When it identifies the
+    // same person as the applicant, seed the new applicant ID before mirroring.
+    if (sourceValues.insured_same && !sourceFields.has('applicant_id') && sourceFields.has('insured_id') && template().fields.some(f => f.id === 'applicant_id')) values().applicant_id = sourceValue('insured_id') ?? '';
+    let relationNeedsReview = false;
+    for (const [combined, individual] of [['relationship_parents_children',['relationship_parents','relationship_children']],['relationship_grandparents_grandchildren',['relationship_grandparents','relationship_grandchildren']]]) {
+      const target = relationFields.find(f => f.id === combined);
+      if (target && individual.some(id => !!sourceValue(id))) values()[target.id] = true;
+      if (!target && sourceValue(combined)) relationNeedsReview = true;
+    }
     const seenGroups = new Set();
     for (const f of template().fields) if (f.exclusive && f.group && values()[f.id]) { if (seenGroups.has(f.group)) values()[f.id] = false; else seenGroups.add(f.group); }
-    state.demo[state.templateId] = state.demo[other]; dataChanged(); renderForm(); $('manageDialog').close(); toast('基本資料已帶入');
+    state.demo[state.templateId] = state.demo[other]; dataChanged(); renderForm(); $('manageDialog').close();
+    if (relationNeedsReview) await showMessage('基本資料已帶入，請確認關係','新版把父母／子女、祖父母／孫子女合併為選項。舊版需要再區分，請在本表重新選擇對應關係。');
+    else toast('基本資料已帶入');
   });
   $('sampleButton').addEventListener('click',async()=>{
     if (hasData(state.templateId) && !await showMessage('以範例取代本表資料？','目前填寫內容會被範例取代。若要保留，請先下載草稿。',{confirm:'帶入範例',cancel:true})) return;
-    const common = {applicant_name:'王小明',applicant_dob_y:'80',applicant_dob_m:'6',applicant_dob_d:'15',applicant_sex_m:true,insured_same:true,purpose_protection:true,purpose_medical:true,senior_suitability_yes:false,sign_y:'115',sign_m:'11',sign_d:'9',sales_unit:'服務一部',sales_license:'A123456789'};
-    const extra = state.templateId === 'life' ? {applicant_occupation:'行政人員',relationship_self:true,company_specified_no:true,insurance_life:true,insurance_amount:'100',existing_policy_no:true,payment_yearly:true,premium_currency:'新臺幣',premium_estimate:'24,000',retirement_21_30:true,source_salary:true,recommended_company:'範例人壽',company_info_website:true,recommended_product:'定期壽險附加醫療保障',recommended_amount:'100萬元',recommended_premium:'24,000',term_20:true,coverage_proposal:true,reason_fit:true} : {category_motor:true,relation_self:true,insured_id:'A123456789',plate_number:'ABC-1234',vehicle_type:'自用小客車',insurance_compulsory:true,insurance_voluntary:true,designated_company_no:true,period_start_y:'115',period_start_m:'11',period_start_d:'9',period_end_y:'116',period_end_m:'11',period_end_d:'9',requested_amount:'300',existing_insurance_no:true,estimated_premium:'12,000',recommended_company:'範例',intro_company_web:true,recommend_reason_needs:true,recommended_other:true,recommended_product:'汽車第三人責任保險',recommended_amount:'300',recommended_premium:'12,000',coverage_proposal:true};
-    state.values[state.templateId] = {...common,...extra}; state.demo[state.templateId] = true; dataChanged(); renderForm(); toast('範例已帶入，可查看文字與勾選位置');
+    const common = {applicant_name:'王小明',applicant_dob_y:'80',applicant_dob_m:'6',applicant_dob_d:'15',applicant_sex_m:true,insured_same:true,purpose_protection:true,purpose_medical:true,senior_suitability_yes:false,sign_y:'115',sign_m:'11',sign_d:'10',sales_unit:'服務一部',sales_license:'A123456789'};
+    const extra = state.templateId !== 'property' ? {applicant_occupation:'行政人員',relationship_self:true,company_specified_no:true,insurance_life:true,insurance_amount:'100',existing_policy_no:true,payment_yearly:true,premium_currency:'新臺幣',premium_estimate:'24,000',retirement_21_30:true,source_salary:true,recommended_company:'範例人壽',company_info_website:true,recommended_product:'定期壽險附加醫療保障',recommended_amount:'100萬元',recommended_premium:'24,000',term_20:true,coverage_proposal:true,reason_fit:true} : {category_motor:true,relation_self:true,insured_id:'A123456789',plate_number:'ABC-1234',vehicle_type:'自用小客車',insurance_compulsory:true,insurance_voluntary:true,designated_company_no:true,period_start_y:'115',period_start_m:'11',period_start_d:'10',period_end_y:'116',period_end_m:'11',period_end_d:'10',requested_amount:'300',existing_insurance_no:true,estimated_premium:'12,000',recommended_company:'範例',intro_company_web:true,recommend_reason_needs:true,recommended_other:true,recommended_product:'汽車第三人責任保險',recommended_amount:'300',recommended_premium:'12,000',coverage_proposal:true};
+    const sample = {...common,...extra,...(template().sampleValues || {})};
+    state.values[state.templateId] = Object.fromEntries(template().fields.filter(f => sample[f.id] !== undefined).map(f => [f.id, sample[f.id]])); state.demo[state.templateId] = true; dataChanged(); renderForm(); toast('範例已帶入，可查看文字與勾選位置');
   });
   async function loadBrowserFont() {
     const bytes = PdfEngine.getFontBytes(); const next = new FontFace('ReportCJK',bytes.buffer.slice(bytes.byteOffset,bytes.byteOffset+bytes.byteLength)); await next.load(); if (activeFontFace) document.fonts.delete(activeFontFace); document.fonts.add(next); activeFontFace = next; await document.fonts.ready;
@@ -403,7 +451,7 @@
     finally { e.target.value = ''; }
   });
   $('defaultFontButton').addEventListener('click',async()=>{ PdfEngine.resetFont(); await loadBrowserFont(); state.customFont = ''; $('fontLabel').textContent = '內附中文字型 · Droid Sans Fallback'; renderPreview(); renderFieldProperties(); toast('已還原內附中文字型'); });
-  $('helpButton').addEventListener('click',()=>showMessage('使用說明','1. 選擇壽險或產險，依段落輸入資料。點右側欄位可跳至對應輸入欄，方框也可直接點選。\n\n2. 日期使用民國年，金額依原表標示的元或萬元輸入；不需要的欄位留白即可。\n\n3. 點「位置校正」可拖曳欄位、拖右下角調整大小，或輸入 X、Y、寬、高與字級。1 pt 約 0.353 mm。\n\n4. 點「匯出 PDF」下載完成的報告。綠色欄位提示與校正框不會出現在 PDF。原稿與填寫文字保留在同一份 PDF。\n\n5. 草稿下載成 JSON，可下次匯入續填。若未開啟本機記憶，重新整理或關閉頁面後，未下載的填寫內容會消失。定位設定仍會保留於可用的瀏覽器儲存空間。\n\n6. 請以 PDF 閱讀器列印，設定 A4、實際大小／100%，關閉「符合頁面」縮放。\n\n7. 簽名欄輸入只會產生打字文字；需要親簽或用印時請留白。\n\n離線版：下載 HTML 後使用 Chrome 或 Edge 開啟，不需要安裝 Python，也不需連網載入字型。'));
+  $('helpButton').addEventListener('click',()=>showMessage('使用說明','1. 選擇新版合併報告、原版壽險或產險，依段落輸入資料。點右側欄位可跳至對應輸入欄，方框也可直接點選。\n\n2. 日期使用民國年，金額依原表標示的元或萬元輸入；不需要的欄位留白即可。\n\n3. 點「位置校正」可拖曳欄位、拖右下角調整大小，或輸入 X、Y、寬、高與字級。1 pt 約 0.353 mm。\n\n4. 點「匯出 PDF」下載完成的報告。綠色欄位提示與校正框不會出現在 PDF。原稿與填寫文字保留在同一份 PDF。\n\n5. 草稿下載成 JSON，可下次匯入續填。若未開啟本機記憶，重新整理或關閉頁面後，未下載的填寫內容會消失。定位設定仍會保留於可用的瀏覽器儲存空間。\n\n6. 請以 PDF 閱讀器列印，設定 A4、實際大小／100%，關閉「符合頁面」縮放。\n\n7. 簽名欄輸入只會產生打字文字；需要親簽或用印時請留白。\n\n離線版：下載 HTML 後使用 Chrome 或 Edge 開啟，不需要安裝 Python，也不需連網載入字型。'));
   window.addEventListener('beforeunload',e=>{ const saved = state.remember && putStored(STORAGE_DRAFT,JSON.stringify(snapshot())); if (state.dirty && !saved) { e.preventDefault(); e.returnValue = ''; } });
   async function initialize() {
     try {

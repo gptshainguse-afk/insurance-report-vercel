@@ -33,17 +33,32 @@
     if (!response.ok) throw new Error('無法載入 ' + path + '，請確認程式檔案完整。');
     return new Uint8Array(await response.arrayBuffer());
   }
+  function templatePdfPath(template) {
+    return typeof template.pdf === 'string' && template.pdf.trim()
+      ? template.pdf : 'assets/' + template.id + '.pdf';
+  }
   async function loadResources(provider) {
-    resourceProvider = provider || resourceProvider || defaultProvider;
+    const nextProvider = provider || resourceProvider || defaultProvider;
+    const registry = root.TEMPLATES;
+    const templates = registry && typeof registry === 'object'
+      ? Object.entries(registry).filter(([, item]) => item && typeof item === 'object')
+        .map(([key, item]) => ({ ...item, id: item.id || key }))
+      : [];
+    // A browser registry preloads every installed template. Standalone Node
+    // callers without a registry only need the font; createPdf loads their
+    // requested source lazily, preserving the original loadResources API.
     const results = await Promise.all([
-      resourceProvider('assets/CJK-Fallback.ttf'),
-      resourceProvider('assets/life.pdf'),
-      resourceProvider('assets/property.pdf'),
+      nextProvider('assets/CJK-Fallback.ttf'),
+      ...templates.map(template => nextProvider(templatePdfPath(template))),
     ]);
-    defaultFontBytes = bytesOf(results[0]);
-    sourceCache.set('life', bytesOf(results[1]));
-    sourceCache.set('property', bytesOf(results[2]));
-    setFontBytes(defaultFontBytes);
+    const nextFontBytes = bytesOf(results[0]);
+    setFontBytes(nextFontBytes);
+    resourceProvider = nextProvider;
+    defaultFontBytes = nextFontBytes;
+    sourceCache.clear();
+    templates.forEach((template, index) => sourceCache.set(template.id, {
+      path: templatePdfPath(template), bytes: bytesOf(results[index + 1]),
+    }));
     return getFontInfo();
   }
   function setFontBytes(bytes) {
@@ -236,6 +251,7 @@
     const exportFontBytes = fontBytes.slice();
     const exportFontkit = fontKit();
     const templateId = template.id;
+    const sourcePath = templatePdfPath(template);
     const title = template.title || '書面分析報告';
     const provider = resourceProvider;
     const color = parseColor(settings.color || '#000000');
@@ -251,11 +267,12 @@
           : layoutText(field, value, settings, overrides[field.id]),
       });
     }
-    let source = sourceCache.get(templateId);
+    const cachedSource = sourceCache.get(templateId);
+    let source = cachedSource && cachedSource.path === sourcePath ? cachedSource.bytes : null;
     if (!source) {
       if (!provider) throw new Error('原始 PDF 尚未載入。');
-      source = bytesOf(await provider('assets/' + templateId + '.pdf'));
-      sourceCache.set(templateId, source);
+      source = bytesOf(await provider(sourcePath));
+      sourceCache.set(templateId, { path: sourcePath, bytes: source });
     }
     const lib = pdfLib();
     const document = await lib.PDFDocument.load(source);

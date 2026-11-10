@@ -6,3 +6,8 @@
 @media print{body{display:none}}
 
 .export-result{flex:0 0 auto;display:flex;align-items:center;gap:14px;padding:13px 24px;background:#eaf5e8;border-top:1px solid #cfe2c8}.export-result>div{flex:1;min-width:0}.export-result strong{display:block;font-size:12px;color:#32663f}.export-result span{display:block;font-size:10px;color:#6e8d6c;margin-top:5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.export-result .text-button{white-space:nowrap}.calibrating{touch-action:none}
+
+/* Multi-template edition */
+.template-switch{min-width:0;gap:20px}.template-tab{flex-shrink:0;text-align:left}.template-version{display:block;font-size:10px;font-weight:400;color:var(--muted);margin-top:4px;letter-spacing:.2px}.template-tab.active .template-version{color:var(--green)}.field-wrap select{width:100%;min-height:40px;border:1px solid #dce5d6;border-radius:6px;background:#fff;padding:9px 10px;color:var(--ink);font:inherit;font-size:13px}.manage-copy{display:grid;grid-template-columns:1fr;gap:10px;border-top:1px solid #e7ede2;margin-top:20px;padding-top:20px}.manage-copy .field-label{margin:0}.manage-copy button{justify-self:start}.manage-bottom{justify-content:flex-end}
+@media(max-width:1060px){.template-switch{gap:14px}.template-tab{font-size:12px}}
+@media(max-width:760px){.template-switch{width:100%;height:auto;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}.template-tab{min-height:49px;justify-content:center;gap:0;padding:4px 0 9px;text-align:center;white-space:normal;font-size:12px}.template-version{font-size:9px;margin-top:4px}.workspace-bar{gap:10px}.mode-switch{margin-left:auto}}

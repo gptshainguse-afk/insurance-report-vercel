@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="產險、壽險書面分析報告：輸入資料、精準定位、即時預覽與 PDF 匯出。資料在自己的瀏覽器中處理。">
+  <meta name="description" content="保險書面分析報告：113.12 版產險、壽險與 115.10 版書面分析報告暨客戶風險辨識表。輸入資料、精準定位、即時預覽與 PDF 匯出。">
   <meta name="theme-color" content="#116b5e">
   <title>保險表單工作台 · 書面分析報告</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%23116b5e'/%3E%3Cpath d='M20 15h17l9 9v25H20z' fill='none' stroke='white' stroke-width='3'/%3E%3Cpath d='m25 35 5 5 10-12' fill='none' stroke='white' stroke-width='3'/%3E%3C/svg%3E">
@@ -14,7 +14,7 @@
     <header class="app-header">
       <a class="brand" href="#" aria-label="保險表單工作台首頁">
         <span class="brand-mark"><svg viewBox="0 0 24 24" fill="none"><path d="M6 3h9l4 4v14H6z" stroke="currentColor" stroke-width="1.6"/><path d="m9 13 2.4 2.5 4.5-5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
-        <span><strong>保險表單工作台</strong><small>書面分析報告 · 113.12 版</small></span>
+        <span><strong>保險表單工作台</strong><small>書面分析報告 · 三份範本</small></span>
       </a>
       <div class="header-actions">
         <span class="local-badge"><span></span> 本機處理</span>
@@ -24,10 +24,7 @@
     </header>
 
     <div class="workspace-bar">
-      <div class="template-switch" aria-label="選擇報告">
-        <button type="button" class="template-tab active" data-template="life"><span class="icon" data-icon="person"></span>壽險分析報告<span class="mini-tag">104 欄</span></button>
-        <button type="button" class="template-tab" data-template="property"><span class="icon" data-icon="shield"></span>產險分析報告<span class="mini-tag">87 欄</span></button>
-      </div>
+      <div class="template-switch" id="templateSwitch" aria-label="選擇報告"></div>
       <div class="mode-switch" role="group" aria-label="工作模式">
         <button type="button" data-mode="fill" class="active"><span class="icon" data-icon="edit"></span>填寫資料</button>
         <button type="button" data-mode="calibrate"><span class="icon" data-icon="target"></span>位置校正</button>
@@ -79,16 +76,17 @@
 
   <dialog id="manageDialog" class="modal"><div class="modal-heading"><div><span class="eyebrow">SAVE & CONTINUE</span><h2>草稿與設定</h2></div><button type="button" class="icon-button" data-close="manageDialog" aria-label="關閉">×</button></div>
     <p class="modal-lead">儲存一份草稿，下一次從同樣的位置繼續。</p>
-    <div class="manage-card"><span class="card-icon" data-icon="folder"></span><div><h3>填寫資料草稿</h3><p>包含兩份報告的資料與定位設定。下載後自行保管，可在另一台電腦匯入。</p><div class="row-buttons"><button class="button small" id="saveDraftButton" type="button">下載草稿 JSON</button><button class="text-button" id="loadDraftButton" type="button">匯入草稿</button></div></div></div>
+    <div class="manage-card"><span class="card-icon" data-icon="folder"></span><div><h3>填寫資料草稿</h3><p>包含三份報告的資料與定位設定，也可匯入舊版草稿。下載後自行保管，可在另一台電腦匯入。</p><div class="row-buttons"><button class="button small" id="saveDraftButton" type="button">下載草稿 JSON</button><button class="text-button" id="loadDraftButton" type="button">匯入草稿</button></div></div></div>
     <div class="manage-card"><span class="card-icon" data-icon="target"></span><div><h3>欄位定位設定</h3><p>只儲存位置、大小及輸出設定，不包含填寫資料。</p><div class="row-buttons"><button class="button small" id="saveLayoutButton" type="button">下載定位 JSON</button><button class="text-button" id="loadLayoutButton" type="button">匯入定位</button></div></div></div>
     <div class="manage-card" id="offlineCard"><span class="card-icon" data-icon="download"></span><div><h3>下載到電腦使用</h3><p>一個 HTML 檔案，已內含範本、中文字型與程式。下載後可直接離線開啟。</p><a class="button small" href="portable.html" download="保險報告填寫工具_離線版.html">下載離線版 HTML</a></div></div>
     <label class="remember-option"><input type="checkbox" id="rememberDraft"><span><strong>在此瀏覽器記住填寫資料</strong><small>預設關閉。關閉時會刪除本工具已儲存的本機草稿。</small></span></label>
-    <div class="manage-bottom"><button class="text-button" id="copyBasicButton" type="button">將另一份的基本資料帶入本表</button><button class="text-button" id="helpButton" type="button">使用說明</button></div>
+    <div class="manage-copy"><label class="field-label" for="copySourceSelect">帶入基本資料的來源</label><select id="copySourceSelect" class="full-input"></select><button class="button small" id="copyBasicButton" type="button">將來源基本資料帶入本表</button></div>
+    <div class="manage-bottom"><button class="text-button" id="helpButton" type="button">使用說明</button></div>
   </dialog>
 
   <dialog id="messageDialog" class="modal compact"><div class="modal-heading"><h2 id="messageTitle"></h2><button type="button" class="icon-button" data-close="messageDialog" aria-label="關閉">×</button></div><div id="messageBody" class="message-body"></div><div class="modal-actions"><button class="button" id="messageCancel" type="button">取消</button><button class="button primary" id="messageConfirm" type="button">確定</button></div></dialog>
   <input class="hidden" id="draftFile" type="file" accept="application/json,.json"><input class="hidden" id="layoutFile" type="file" accept="application/json,.json"><input class="hidden" id="fontFile" type="file" accept=".ttf,.otf">
-  <div id="toast" class="toast" role="status"></div><div class="loading-overlay" id="loadingOverlay"><div class="spinner"></div><strong>正在準備表單工作台</strong><span>載入兩份原稿與內附中文字型</span></div>
+  <div id="toast" class="toast" role="status"></div><div class="loading-overlay" id="loadingOverlay"><div class="spinner"></div><strong>正在準備表單工作台</strong><span>載入三份原稿與內附中文字型</span></div>
   <script src="assets/pdf-lib.min.js"></script><script src="assets/fontkit.umd.min.js"></script><script src="templates.js"></script><script src="engine.js"></script><script src="app.js"></script>
 </body>
 </html>
